@@ -1,6 +1,7 @@
 import os
 from random import choice
 from time import sleep
+import pickle
 
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
@@ -17,9 +18,9 @@ if __name__ == "__main__":
     (X, y), (_, _) = tf.keras.datasets.mnist.load_data()
 
     print(f"Loaded {X.shape[0]} training images from the disk.")
-    n = X.shape[0]
-    X = X[:(n // 4)]
-    y = y[:(n // 4)]
+    # n = X.shape[0]
+    # X = X[:n]
+    # y = y[:(n // 4)]
 
     # Add 1 "channel" since the images are grayscale
     X = np.expand_dims(X, -1)
@@ -29,7 +30,7 @@ if __name__ == "__main__":
     X = X / 255
 
     # Cross validation parameters
-    cv_k = 10
+    cv_k = 5
     cv_valid_size = 1 / cv_k
     split_indices = list(StratifiedKFold(n_splits=cv_k, shuffle=True).split(X, y))
 
@@ -63,7 +64,7 @@ if __name__ == "__main__":
             x=X_train,
             y=y_train,
             validation_data=(X_valid, y_valid),
-            epochs=1
+            epochs=3
         ).history
 
         # Save validation accuracy (last epoch -1)
@@ -72,9 +73,15 @@ if __name__ == "__main__":
         # Update posterior (Bayes model from the paper, at work)
         data["posterior"] = bayes_model.fit_predict(data["accuracies"])
 
+    # Store some statistics
+    stats = []
+    total_params = 0
+    full_reached = 0
+    n_total_params = len(list(param_generator()))
+
     # Loop the hyperparam generator!
     hyperparams = param_generator()
-    while True:
+    for i in range(99999):
         # If buffer not full, add new set
         if len(buffer) < BUFFER_SIZE:
             try:
@@ -82,14 +89,15 @@ if __name__ == "__main__":
             except Exception as e:
                 print("Done", e)
                 break
-            print(params)
             new_data = {"params": params, "accuracies": [], "posterior": None}
-            train_parallel(new_data)
-            buffer.append(new_data)
+            buffer = [new_data] + buffer
+            total_params += 1
 
         # Train and add new posterior (choose random element)
         remaining = filter(lambda data: len(data["accuracies"]) < cv_k, buffer)
-        train_parallel(choice(list(remaining)))
+        next_data = list(remaining)[0]
+        train_parallel(next_data)
+        full_reached += int(len(next_data["accuracies"]) == cv_k)
 
         # Sort buffer (highest posterior mean first)
         buffer = sorted(buffer, key=lambda data: np.mean(data["posterior"]))[::-1]
@@ -98,17 +106,31 @@ if __name__ == "__main__":
 
         # Prune (the key step for this paper)
         post_best = buffer[0]["posterior"]
-        buffer = list(filter(lambda data: not should_prune(post_best, data["posterior"]), buffer))
+        buffer = list(filter(lambda data: (not should_prune(post_best, data["posterior"])), buffer))
 
-        print(f"Bayes pruner removed {(debug_before_len - len(buffer))} hyperparam sets.")
+        removed_n = debug_before_len - len(buffer)
+        print(f"---- Bayes pruner removed {removed_n} hyperparam sets. ----")
 
         # If buffer is full and all data points have been exchausted. drop last one.
-        if len(buffer) == BUFFER_SIZE and all(len(data["accuracies"]) == cv_k for data in buffer):
-            buffer.pop()
+        if len(buffer) == BUFFER_SIZE:
+            buffer = [buffer[0]] + list(filter(lambda data: len(data["accuracies"]) < cv_k, buffer[1:]))
+            print("Buffer full. Popped off non-best fully evaluated items.")
+
+        stats.append({
+            "round": i,
+            "best_m": np.mean(buffer[0]['accuracies']),
+            "pruned": removed_n,
+            "total_params": total_params,
+            "full_reached": full_reached,
+        })
+        with open("stats.pkl", "wb") as f:
+            pickle.dump(stats, f)
+            # print("Saved stats to file!")
 
         # Print stats
-        print("")
+        print(f"\n------ Round {i} -------")
+        print(f"------ Params {total_params} / {n_total_params} -------")
         print(f"Buffer size: {len(buffer)}")
         print(f"Best model mean accuracy: {np.mean(buffer[0]['accuracies'])}")
         print(f"Worst model mean accuracy: {np.mean(buffer[-1]['accuracies'])}")
-        print(f"Average CV folds: {np.mean(list(map(lambda d: len(d['accuracies']), buffer)))}")
+        print(f"Average CV folds: {np.mean(list(map(lambda d: len(d['accuracies']), buffer)))}\n")

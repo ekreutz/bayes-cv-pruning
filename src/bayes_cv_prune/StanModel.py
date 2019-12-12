@@ -8,7 +8,7 @@ import numpy as np
 from .utils import suppress_stdout_stderr
 
 CURRENT_PATH = os.path.dirname(os.path.realpath(__file__))
-MODEL_PATH = os.path.join(CURRENT_PATH, "stan_models", "model.stan")
+MODEL_PATH = os.path.join(CURRENT_PATH, "stan_models", "exp.stan")
 CACHES_PATH = os.path.join(CURRENT_PATH, "stan_cache")
 os.environ["STAN_NUM_THREADS"] = "4"
 
@@ -26,8 +26,10 @@ def should_prune(post_best, post_new, tau=0.99):
     """Should we prune the CV round "new", if post_best is the best posterior
     so far?
     """
-    p_new_is_worse = (post_best > post_new).sum() / post_new.size
-    return p_new_is_worse > tau
+    new_is_worse = compare_probs(post_best, post_new) > tau
+    if new_is_worse:
+        print("New probability worse... Pruning.")
+    return new_is_worse
 
 class BayesStanPruner:
     """Wrapper for STAN; easy accessibility from training loop.
@@ -71,8 +73,6 @@ class BayesStanPruner:
                 data={
                     "N": accuracies.size,
                     "a": accuracies,
-                    "mu0_upper": [10000, 100],
-                    "eta0_upper": [10000, 10000],
                 },
                 iter=self.iter,
                 chains=self.chains,
