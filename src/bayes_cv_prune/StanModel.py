@@ -8,7 +8,7 @@ import numpy as np
 from .utils import suppress_stdout_stderr
 
 CURRENT_PATH = os.path.dirname(os.path.realpath(__file__))
-MODEL_PATH = os.path.join(CURRENT_PATH, "stan_models", "exp.stan")
+MODEL_PATH = os.path.join(CURRENT_PATH, "stan_models", "exp_new.stan")
 CACHES_PATH = os.path.join(CURRENT_PATH, "stan_cache")
 os.environ["STAN_NUM_THREADS"] = "4"
 
